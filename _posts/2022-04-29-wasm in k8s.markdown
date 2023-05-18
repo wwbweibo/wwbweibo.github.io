@@ -1,0 +1,123 @@
+---
+layout: post
+title:  "使用krustlet调度wasm到k8s"
+date:   2022-04-29 23:33:27 +0800
+categories: kubernetes
+---
+# 使用krustlet调度wasm到k8s
+
+## 1. 使用rust编写一个wasm程序
+
+1. 使用`cargo`创建一个hello-world项目
+   ```bash
+   $ cargo new hello-world 
+   ```
+
+2. 之后，在`src/main.rs`中编写我们的代码逻辑，这里程序将会循环输入`hello world`
+   ```rust
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    fn main() {
+        loop {
+            println!("Hello, world!");
+            sleep(Duration::from_secs(5))
+        }
+    }
+   ```
+
+3. 使用`cargo`尝试运行我们的程序
+   ```bash
+   $ cargo run
+   Hello, world!
+   Hello, world! 
+   ```
+
+4. 使用`cargo`将代码编译为wasm
+   ```bash
+   $ cargo build --release --target wasm32-wasi
+   ```
+   这一步将会在`target/wasm32-wasi/release`下生成`hello-world.wasm`文件，可以尝试使用`wasmtime`来运行该文件
+   ```bash
+   $ wasmtime target/wasm32-wasi/release/hello-world.wasm
+   Hello, world!
+   Hello, world! 
+   ```
+
+## 将wasm文件打包为oci容器镜像并推送到镜像仓库
+
+使用github的容器注册表作为镜像仓库，文档：https://docs.github.com/cn/packages/working-with-a-github-packages-registry/working-with-the-container-registry
+
+使用`wasm-to-oci`工具将wasm推送到镜像仓库
+
+```bash
+$ wasm-to-oci push target/wasm32-wasi/release/hello-loop.wasm [image-registry]
+```
+
+## 将工作负载部署到k8s
+
+### 运行krustlet
+
+从krustlet官网下载可执行文件，如果是 m1 的mac，需要自己动手从代码编译。  
+
+下载之后直接执行
+```
+$ ./krustlet-wasi
+```
+
+之后可以使用`kubectl`查看当前连接的节点
+
+```
+$ kubectl get nodes
+...
+weibodemacbook-pro.local   Ready    <none>                 12s   1.0.0-alpha.1
+...
+```
+
+可以看到`krustlet`已经注册为一个k8s的节点
+
+### 部署项目
+
+创建yaml文件
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: krustlet-tutorial
+spec:
+  containers:
+    - name: krustlet-tutorial
+      image: <image>
+  imagePullSecrets:
+    - name: pull-secret
+  tolerations:
+    - key: "kubernetes.io/arch"
+      operator: "Equal"
+      value: "wasm32-wasi"
+      effect: "NoExecute"
+    - key: "kubernetes.io/arch"
+      operator: "Equal"
+      value: "wasm32-wasi"
+      effect: "NoSchedule"
+```
+
+使用kubectl部署项目
+
+```bash
+$ kubectl apply -f krustlet.yaml
+```
+
+查看日志
+
+```
+$ kubectl logs krustlet-tutorial 
+Hello, world!
+Hello, world!
+Hello, world!
+Hello, world!
+Hello, world!
+Hello, world!
+Hello, world!
+Hello, world!
+```
